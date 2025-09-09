@@ -3,7 +3,7 @@ import numpy as np
 import math
 import time
 
-# 1. 환경 생성
+# 환경 생성
 env = gym.make('CartPole-v1', render_mode='human')
 
 # 각 상태 변수를 몇 개의 구간으로 나눌지 정의
@@ -24,7 +24,7 @@ state_value_bounds = [
 ]
 
 # Q-테이블 초기화
-# (10, 10, 10, 10, 2) 크기의 거대한 테이블이 생성됨
+# (10, 10, 10, 10, 2) 크기
 q_table = np.zeros(num_buckets + (num_actions,))
 
 # 연속적인 상태를 이산적인 상태로 변환해주는 함수
@@ -68,7 +68,7 @@ for episode in range(episodes):
         
         new_discrete_state = discretize_state(new_state)
         
-        # Q-Value 업데이트
+        # Q-Value 업데이트(벨만 방정식)
         old_value = q_table[discrete_state + (action,)]
         next_max = np.max(q_table[new_discrete_state])
         
