@@ -13,6 +13,7 @@ T_HORIZON = 10    # 20에서 10으로 줄임 (메모리 사용량 감소)
 NUM_AGENTS = 3
 ENTROPY_COEF = 0.01
 VALUE_COEF = 0.5
+VALUE_LOSS_COEF = VALUE_COEF  # alias for compatibility with agent code
 
 # 환경 설정
 ENV_NAME = "simple_spread_v3"
@@ -28,6 +29,8 @@ ANIMATION_SPEED = 0.05
 # 네트워크 설정
 HIDDEN_DIM = 128  # 256에서 128로 줄임 (GPU 사용량 감소)
 SHARED_LAYERS = 2
+GRADIENT_CLIP_NORM = 0.5  # gradient clipping norm for stability
+ENTROPY_DECAY = 0.995     # decay factor for entropy coefficient
 
 # 디바이스 설정
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"

@@ -8,12 +8,15 @@ import numpy as np
 import time
 
 # --- 하이퍼파라미터 설정 ---
-learning_rate = 0.0005
-gamma = 0.98         # 보상 할인율
-lmbda = 0.95         # GAE 람다 값 [cite: 326]
-eps_clip = 0.2       # L_CLIP의 클리핑 파라미터 epsilon
-K_epochs = 4         # 한 번의 데이터 수집 후 업데이트 반복 횟수 
+learning_rate = 0.0005 # : PPO는 정책을 점진적으로 업데이트하는 알고리즘이므로 적절한 학습률이 매우 중요
+gamma = 0.98         # 보상 할인율 => G_t = r_t + γ*r_{t+1} + γ²*r_{t+2} => 1에 가까울수록 미래를 중요하게 생각 (장기적 관점)
+lmbda = 0.95         # GAE 람다 값(Actor의 행동에 대한 평가) => λ=1: Monte Carlo 방식 (전체 에피소드 고려)
+eps_clip = 0.2       # L_CLIP의 클리핑 파라미터 epsilon = ratio = π_θ(a|s) / π_θ_old(a|s)
+K_epochs = 4         # 한 번의 데이터 수집 후 업데이트 반복 횟수 (데이터 재사용 => 효율성 증대)
 T_horizon = 20       # 데이터 수집을 위한 타임스텝 수 
+# 20스텝마다 정책을 업데이트
+# 짧으면: 업데이트가 자주 일어나지만 분산이 큼
+# 길면: 안정적이지만 업데이트가 느림
 
 # --- 신경망 모델 정의 (Actor-Critic) ---
 class ActorCritic(nn.Module):
@@ -28,30 +31,35 @@ class ActorCritic(nn.Module):
         self.critic_head = nn.Linear(256, 1)
 
     def forward(self, x):
-        x = F.relu(self.fc1(x))
+        x = F.relu(self.fc1(x)) # input state => 256차원 특징 벡터로 변환
         
         # 행동 확률 분포 (Policy)
-        action_probs = F.softmax(self.actor_head(x), dim=-1)
+        action_probs = F.softmax(self.actor_head(x), dim=-1) # 256차원 → action_dim -> 행동 확률 분포
         
         # 상태 가치 (Value)
-        state_value = self.critic_head(x)
+        state_value = self.critic_head(x) # 256차원 → 1차원 -> 상태 가치
         
         return action_probs, state_value
+
+# example
+# state = [cart_position, cart_velocity, pole_angle, pole_velocity] # [0.1, 0.05, 0.02, -0.1]
+# action_probs = [0.3, 0.7]  # [왼쪽 확률, 오른쪽 확률]
+# state_value = 0.85  # 현재 상태가 얼마나 좋은지 (0~1 사이)
 
 # --- PPO 에이전트 클래스 ---
 class PPOAgent:
     def __init__(self, input_dim, action_dim):
         self.policy = ActorCritic(input_dim, action_dim)
         self.optimizer = optim.Adam(self.policy.parameters(), lr=learning_rate)
-        # 이전 정책과 현재 정책의 KL Divergence를 제한하기 위한 객체 L_CLIP [cite: 66, 127]
-        self.objective_function = nn.SmoothL1Loss() # Value Loss 계산용
 
     def get_action(self, state):
-        state_tensor = torch.from_numpy(state).float().unsqueeze(0)
+        state_tensor = torch.from_numpy(state).float().unsqueeze(0) # NumPy 배열 → PyTorch 텐서
         probs, value = self.policy(state_tensor)
+        # probs: 행동 확률 분포
+        # value: 상태 가치
         
         # 행동 확률 분포로부터 행동 샘플링
-        m = Categorical(probs)
+        m = Categorical(probs) #  이산 확률 분포 클래스
         action = m.sample()
         
         # 행동, 행동의 로그 확률, 가치 반환
@@ -64,11 +72,15 @@ class PPOAgent:
         return torch.argmax(probs).item()
 
     def compute_gae(self, next_value, rewards, dones, values):
+        # TD(0): 1스텝만 고려 → 낮은 분산, 높은 편향
+        # Monte Carlo: 전체 에피소드 고려 → 높은 분산, 낮은 편향
+        # GAE: TD(0)와 Monte Carlo 사이의 타협 → 적절한 분산과 편향
+
         # Generalized Advantage Estimation (GAE) 계산
-        # Source: Proximal Policy Optimization Algorithms, Page 4, Equation (11) 
         advantages = torch.zeros_like(rewards)
         last_gae_lam = 0
         
+        # 역순 루프
         for t in reversed(range(len(rewards))):
             if dones[t]:
                 mask = 0 # 에피소드가 끝났으면 다음 상태 가치는 0
@@ -81,6 +93,10 @@ class PPOAgent:
             next_value = values[t] # 다음 루프를 위해 현재 value 저장
             
             # GAE 계산
+            # 현재 시점(t)의 어드밴티지(At)는, 현재의 예측 오차(δt​)와 모든 미래 예측 오차들(δt+1,δt+2​,...)의 할인된 총합
+            # At​=δt​+γλ⋅At+1
+            # ​last_gae_lam: (핵심) 바로 다음 스텝의 어드밴티지, At+1(이전 반복에서 이미 계산됨)
+            # mask: 에피소드가 끝나면 미래 가치가 없으므로 다음 어드밴-티지 항(At+1)을 0으로 만들어주는 안전장치입니다.
             advantages[t] = last_gae_lam = delta + gamma * lmbda * mask * last_gae_lam
             
         # 가치 함수의 타겟 값 (Returns) 계산
@@ -98,9 +114,9 @@ class PPOAgent:
         # 마지막 스텝의 가치를 예측하여 GAE 계산에 사용
         with torch.no_grad():
             _, last_value = self.policy(states[-1].unsqueeze(0))
-        advantages, returns = self.compute_gae(last_value, rewards, dones, values)
+        advantages, returns = self.compute_gae(last_value, rewards, dones, values) # returns: 각 타임스텝의 Return 값 (Critic 학습 타겟)
         
-        # 텐서 정규화 (학습 안정성 향상)
+        # 텐서 정규화 (분산 을 낮춰서 학습 안정성 향상) => 정규화된 Advantage는 평균 0, 표준편차 1
         if len(advantages) > 1:
             advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
         else:
@@ -120,9 +136,9 @@ class PPOAgent:
             ratio = torch.exp(new_log_probs - old_log_probs)
             
             # L_CPI(theta) * A_t
-            surr1 = ratio * advantages
-            # clip(ratio, 1-eps, 1+eps) * A_t
-            surr2 = torch.clamp(ratio, 1 - eps_clip, 1 + eps_clip) * advantages
+            surr1 = ratio * advantages # 원래 목적함수
+            # clip(ratio, 1-eps, 1+eps) * A_t 
+            surr2 = torch.clamp(ratio, 1 - eps_clip, 1 + eps_clip) * advantages # 클리핑된 목적함수
             
             # Actor Loss (Clipped Objective)
             # 수식: L_CLIP(theta) = E[min(surr1, surr2)]
@@ -134,6 +150,8 @@ class PPOAgent:
             critic_loss = F.mse_loss(new_values, returns)
             
             # Entropy Bonus (탐험 장려) 
+            # 높은 엔트로피 = 다양한 행동 선택 (탐험)
+            # 낮은 엔트로피 = 특정 행동만 선택 (착취)
             entropy = m.entropy().mean()
             
             # 최종 Loss = Actor Loss + Critic Loss - Entropy Bonus
