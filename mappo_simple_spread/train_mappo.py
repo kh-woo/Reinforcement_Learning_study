@@ -15,6 +15,8 @@ from agents.mappo_agent import MAPPOAgent
 from visualization.simple_spread_visualizer import SimpleSpreadVisualizer
 from utils.logger import TrainingLogger
 
+NUM_AGENTS = 2  # 환경 단순화: 에이전트 수 2로 줄임
+
 def main():
     """메인 학습 함수"""
     print("MAPPO Simple Spread 학습 시작!")
@@ -66,8 +68,9 @@ def main():
         episode_rewards = [0.0 for _ in range(NUM_AGENTS)]
         episode_length = 0
         
-        # 에피소드 실행
-        for step in range(T_HORIZON):
+        # 에피소드 실행 (환경 종료 조건까지 진행)
+        step_in_episode = 0
+        while True:
             # 모든 에이전트의 행동 계산
             actions = []
             log_probs = []
@@ -81,6 +84,10 @@ def main():
             
             # 환경에서 한 스텝 실행
             next_observations, rewards, dones, truncations, infos = env.step(actions)
+            
+            # step별 디버깅 출력 (처음 10에피소드만)
+            if episode < 10:
+                print(f"[STEP DEBUG][Episode {episode}][Step {step_in_episode}] actions: {actions}, rewards: {rewards}, dones: {dones}, episode_rewards: {episode_rewards}")
             
             # 시각화 업데이트
             if visualizer and episode % 10 == 0:  # 10 에피소드마다 시각화
@@ -98,12 +105,18 @@ def main():
             
             observations = next_observations
             episode_length += 1
+            step_in_episode += 1
             
-            # 에피소드 종료 확인
-            if all(dones) or all(truncations):
+            # 일정 길이마다 업데이트 수행 (rollout 방식)
+            if step_in_episode % T_HORIZON == 0:
+                agent.update()
+                agent.clear_storage()
+
+            # 에피소드 종료 확인 (환경의 종료/트렁케이션 또는 최대 사이클)
+            if all(dones) or all(truncations) or episode_length >= env.max_cycles:
                 break
         
-        # 정책 업데이트
+        # 남은 trajectory 업데이트
         agent.update()
         
         # 로깅
@@ -115,7 +128,7 @@ def main():
             best_reward = total_reward
             patience = 0
             # 최고 성능 모델 저장
-            best_model_path = "models/mappo_simple_spread_best.pth"
+            best_model_path = f"models/mappo_simple_spread_best.pth"
             os.makedirs("models", exist_ok=True)
             agent.save_model(best_model_path)
         else:
@@ -138,7 +151,7 @@ def main():
             break
         
         # 모델 저장 (주기적으로)
-        if episode % 1000 == 0 and episode > 0:
+        if episode % MODEL_SAVE_INTERVAL == 0 and episode > 0:
             model_path = f"models/mappo_simple_spread_episode_{episode}.pth"
             os.makedirs("models", exist_ok=True)
             agent.save_model(model_path)
@@ -156,7 +169,7 @@ def main():
     logger.plot_training_curves("training_curves.png")
     
     # 최종 모델 저장
-    final_model_path = "models/mappo_simple_spread_final.pth"
+    final_model_path = f"models/mappo_simple_spread_final.pth"
     agent.save_model(final_model_path)
     print(f"최종 모델 저장: {final_model_path}")
     

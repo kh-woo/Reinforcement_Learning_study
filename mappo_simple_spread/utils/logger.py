@@ -5,6 +5,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 from collections import deque
 import os
+import csv
+from config import STATS_CSV_PATH
 
 class TrainingLogger:
     """
@@ -47,6 +49,18 @@ class TrainingLogger:
         if total_reward > self.best_reward:
             self.best_reward = total_reward
             self.best_episode = episode_num
+
+        # CSV로 간단한 학습 로그 저장 (읽기 쉬운 형태)
+        try:
+            os.makedirs(os.path.dirname(STATS_CSV_PATH), exist_ok=True)
+            write_header = not os.path.exists(STATS_CSV_PATH)
+            with open(STATS_CSV_PATH, 'a', newline='') as f:
+                writer = csv.writer(f)
+                if write_header:
+                    writer.writerow(["episode", "total_reward", "episode_length"] + [f"agent_{i+1}_reward" for i in range(self.num_agents)])
+                writer.writerow([episode_num, total_reward, episode_length] + rewards)
+        except Exception:
+            pass
     
     def get_statistics(self):
         """현재 통계 반환"""
